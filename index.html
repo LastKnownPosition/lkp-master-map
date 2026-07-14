@@ -261,6 +261,7 @@ buildGeography();
 
 // ---- view transform ----
 let k=0.25, tx=0, ty=0, viewInsetR=0; // viewInsetR: keep the focus clear of the open panel
+let userInteracted=false; // once true, resizes preserve the user's view instead of re-fitting
 const clampK = v => Math.max(CW/W0*0.82, Math.min(70, v));
 function apply(){
   scene.setAttribute('transform',`translate(${tx},${ty}) scale(${k})`);
@@ -340,6 +341,7 @@ function drawPins(){
 // ---- interaction: zoom / pan ----
 mapSvg.addEventListener('wheel',ev=>{
   ev.preventDefault();
+  userInteracted=true;
   const f=Math.pow(1.0016,-ev.deltaY);
   const nk=clampK(k*f);
   const mx=ev.clientX, my=ev.clientY;
@@ -357,7 +359,7 @@ app.addEventListener('pointermove',ev=>{
   if(drag){
     const dx=ev.clientX-drag.x, dy=ev.clientY-drag.y;
     if(!dragging && Math.abs(dx)+Math.abs(dy)>4){
-      dragging=true; hideTip();
+      dragging=true; userInteracted=true; hideTip();
       try{ app.setPointerCapture(drag.id); }catch(e){}
       app.style.cursor='grabbing';
     }
@@ -417,7 +419,7 @@ function hideTip(){ tip.classList.remove('on'); tipCode=null; }
 const detail=document.getElementById('detail');
 function selectDot(code){
   const e=EPISODES.find(x=>x.code===code); if(!e)return;
-  selected=e; hideTip();
+  selected=e; hideTip(); userInteracted=true;
   viewInsetR = window.innerWidth>640 ? 380 : 0; // panel is a right drawer on desktop
   app.classList.add('panelopen');
   if(e.bbox) fitBox(e.bbox.lonmin,e.bbox.latmin,e.bbox.lonmax,e.bbox.latmax,0.28,true);
@@ -470,20 +472,31 @@ META.categories.forEach(c=>{
 });
 
 // ---- controls ----
-function zoomBy(f){ const nk=clampK(k*f);
+function zoomBy(f){ userInteracted=true; const nk=clampK(k*f);
   tx=CW/2-(CW/2-tx)*(nk/k); ty=CH/2-(CH/2-ty)*(nk/k); k=nk; apply(); }
 document.getElementById('zin').onclick=()=>zoomBy(1.5);
 document.getElementById('zout').onclick=()=>zoomBy(1/1.5);
-document.getElementById('fit').onclick=()=>{ closeDetail(); fitData(true); };
-document.getElementById('world').onclick=()=>{ closeDetail(); fitWorld(true); };
+document.getElementById('fit').onclick=()=>{ userInteracted=true; closeDetail(); fitData(true); };
+document.getElementById('world').onclick=()=>{ userInteracted=true; closeDetail(); fitWorld(true); };
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDetail(); });
 
 // ---- boot ----
+// Fit the moment #app actually has a size. A plain load/rAF boot can run
+// before layout gives the page its dimensions (slow parse of the inline data
+// over a network), leaving the map at scale 0; a ResizeObserver can't miss it.
 document.getElementById('ct').textContent=META.count;
-function boot(){ CW=app.clientWidth||window.innerWidth; CH=app.clientHeight||window.innerHeight; fitData(false); }
-window.addEventListener('resize',()=>{ CW=app.clientWidth||window.innerWidth; CH=app.clientHeight||window.innerHeight; apply(); });
-requestAnimationFrame(boot);
-window.addEventListener('load',boot);
+// Keep the map framed to the data on every resize UNTIL the user takes over
+// (pan / zoom / select). This survives the viewport changing size after load
+// — a plain one-shot fit can lock onto a mid-layout size and mis-frame.
+function refresh(){
+  CW=app.clientWidth||window.innerWidth||1280;
+  CH=app.clientHeight||window.innerHeight||720;
+  if(!userInteracted){ fitData(false); } else { apply(); }
+}
+if(window.ResizeObserver){ new ResizeObserver(refresh).observe(app); }
+window.addEventListener('resize',refresh);
+window.addEventListener('load',refresh);
+requestAnimationFrame(refresh);
 setTimeout(()=>{ const h=document.getElementById('hint'); if(h)h.style.opacity='0'; },7000);
 </script>
 </body>
